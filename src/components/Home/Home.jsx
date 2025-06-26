@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import * as XLSX from 'xlsx';
-import { Upload, Send, Settings, AlertCircle, CheckCircle, XCircle, Plus, Minus, FileText, Zap } from 'lucide-react';
+import { Upload, Send, Settings, AlertCircle, CheckCircle, XCircle, Plus, Minus, FileText, Zap, Calendar } from 'lucide-react';
 
 const Home = () => {
   const [baseUrl, setBaseUrl] = useState('');
@@ -18,11 +18,63 @@ const Home = () => {
   const [logs, setLogs] = useState([]);
   const [csvPreview, setCsvPreview] = useState([]);
   const [totalRows, setTotalRows] = useState(0);
+  const [dateFields, setDateFields] = useState([]);
+  const [showDateMapping, setShowDateMapping] = useState(false);
 
   const addLog = useCallback((message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
     setLogs(prev => [...prev, { message, type, timestamp }]);
   }, []);
+
+  // Helper function to detect if a value is an Excel date serial number
+  const isExcelDate = (value) => {
+    return typeof value === 'number' && value > 1 && value < 2958466; // Excel date range
+  };
+
+  // Convert Excel serial date to ISO 8601 string
+  const excelDateToISO = (serial) => {
+    // Excel's epoch is January 1, 1900, but it incorrectly treats 1900 as a leap year
+    // So we need to account for this bug
+    const excelEpoch = new Date(1899, 11, 30); // December 30, 1899
+    const date = new Date(excelEpoch.getTime() + (serial * 24 * 60 * 60 * 1000));
+    return date.toISOString().split('T')[0]; // Return YYYY-MM-DD format
+  };
+
+  // Helper function to convert various date formats to ISO 8601
+  const convertToISO = (value, fieldName) => {
+    if (!value) return '';
+    
+    // If it's already a string that looks like ISO date, return as is
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+      return value.split('T')[0]; // Keep only date part
+    }
+    
+    // If it's an Excel serial number
+    if (isExcelDate(value)) {
+      return excelDateToISO(value);
+    }
+    
+    // If it's a string that might be a date
+    if (typeof value === 'string') {
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) {
+        return date.toISOString().split('T')[0];
+      }
+    }
+    
+    // If it's already a Date object
+    if (value instanceof Date && !isNaN(value.getTime())) {
+      return value.toISOString().split('T')[0];
+    }
+    
+    return value; // Return original value if can't convert
+  };
+
+  const handleDateFieldChange = (index, isDateField) => {
+    const newDateFields = [...dateFields];
+    newDateFields[index] = isDateField;
+    setDateFields(newDateFields);
+  };
 
   const handleFileChange = (e) => {
     const uploadedFile = e.target.files[0];
@@ -51,7 +103,24 @@ const Home = () => {
         if (jsonData.length > 0) {
           const headers = Object.keys(jsonData[0]);
           setFieldNames(headers);
+          
+          // Auto-detect potential date fields
+          const potentialDateFields = headers.map(header => {
+            const sampleValue = jsonData[0][header];
+            const isLikelyDate = header.toLowerCase().includes('date') || 
+                               header.toLowerCase().includes('time') ||
+                               isExcelDate(sampleValue);
+            return isLikelyDate;
+          });
+          
+          setDateFields(potentialDateFields);
+          
+          const dateFieldsDetected = potentialDateFields.filter(Boolean).length;
           addLog(`Auto-detected ${headers.length} fields: ${headers.join(', ')}`, 'info');
+          if (dateFieldsDetected > 0) {
+            addLog(`🗓️ Detected ${dateFieldsDetected} potential date fields`, 'info');
+            setShowDateMapping(true);
+          }
         }
       } catch (err) {
         addLog(`Error reading file: ${err.message}`, 'error');
@@ -64,10 +133,23 @@ const Home = () => {
     const newFields = [...fieldNames];
     newFields[index] = value;
     setFieldNames(newFields);
+    
+    // Ensure dateFields array matches fieldNames length
+    if (dateFields.length !== newFields.length) {
+      const newDateFields = [...dateFields];
+      while (newDateFields.length < newFields.length) {
+        newDateFields.push(false);
+      }
+      if (newDateFields.length > newFields.length) {
+        newDateFields.splice(newFields.length);
+      }
+      setDateFields(newDateFields);
+    }
   };
 
   const addField = () => {
     setFieldNames([...fieldNames, '']);
+    setDateFields([...dateFields, false]);
   };
 
   const removeField = (index) => {
@@ -75,6 +157,10 @@ const Home = () => {
       const newFields = [...fieldNames];
       newFields.splice(index, 1);
       setFieldNames(newFields);
+      
+      const newDateFields = [...dateFields];
+      newDateFields.splice(index, 1);
+      setDateFields(newDateFields);
     }
   };
 
@@ -165,8 +251,21 @@ const Home = () => {
             
             try {
               const payload = {};
-              cleanedFieldNames.forEach((field) => {
-                payload[field] = row[field] !== undefined ? row[field] : '';
+              cleanedFieldNames.forEach((field, fieldIndex) => {
+                let value = row[field] !== undefined ? row[field] : '';
+                
+                // Convert date fields to ISO format if marked as date
+                if (dateFields[fieldIndex] && value) {
+                  const originalValue = value;
+                  value = convertToISO(value, field);
+                  
+                  // Log conversion for debugging
+                  if (originalValue !== value && successCount === 0) {
+                    addLog(`🗓️ Converting ${field}: ${originalValue} → ${value}`, 'info');
+                  }
+                }
+                
+                payload[field] = value;
               });
 
               const response = await fetch(`${baseUrl}${apiEndpoint}`, {
@@ -317,7 +416,7 @@ const Home = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-2">Field Mapping</label>
                   <div className="space-y-2 max-h-40 overflow-y-auto">
                     {fieldNames.map((field, index) => (
-                      <div key={index} className="flex gap-2">
+                      <div key={index} className="flex gap-2 items-center">
                         <input
                           type="text"
                           placeholder={`Field ${index + 1}`}
@@ -325,6 +424,15 @@ const Home = () => {
                           onChange={(e) => handleFieldChange(index, e.target.value)}
                           className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                         />
+                        <label className="flex items-center text-xs text-gray-600 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={dateFields[index] || false}
+                            onChange={(e) => handleDateFieldChange(index, e.target.checked)}
+                            className="mr-1 w-3 h-3 text-blue-600 rounded focus:ring-blue-500"
+                          />
+                          Date
+                        </label>
                         <button
                           onClick={() => removeField(index)}
                           disabled={fieldNames.length === 1}
@@ -342,6 +450,20 @@ const Home = () => {
                     <Plus className="w-4 h-4 mr-2" />
                     Add Field
                   </button>
+                  
+                  {/* Date Conversion Info */}
+                  {dateFields.some(Boolean) && (
+                    <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                      <div className="text-sm text-blue-800">
+                        <div className="font-medium mb-1">🗓️ Date Conversion Active</div>
+                        <div className="text-xs">
+                          Excel dates (like 45848) will be converted to ISO format (YYYY-MM-DD).
+                          <br />
+                          Example: 45848 → 2025-07-15
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Advanced Settings */}
