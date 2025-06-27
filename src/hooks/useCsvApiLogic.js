@@ -3,9 +3,9 @@ import * as XLSX from 'xlsx';
 
 const useCsvApiLogic = () => {
   // State variables (localStorage removed for Claude.ai compatibility)
-  const [baseUrl, setBaseUrl] = useState('');
+  const [baseUrl, setBaseUrl] = useState(localStorage.getItem('baseUrl') || '');
   const [apiEndpoint, setApiEndpoint] = useState('');
-  const [authToken, setAuthToken] = useState('');
+  const [authToken, setAuthToken] = useState(localStorage.getItem('authToken') || '');
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState('');
   const [fieldNames, setFieldNames] = useState(['']);
@@ -29,9 +29,17 @@ const useCsvApiLogic = () => {
   }, []);
 
   const saveApiConfig = useCallback(() => {
-    // Simulate saving (localStorage not available in Claude.ai)
-    addLog('API configuration saved (in-memory)', 'success');
-  }, [addLog]);
+    // Save to localStorage
+    try {
+      localStorage.setItem('baseUrl', baseUrl);
+      localStorage.setItem('apiEndpoint', apiEndpoint);
+      localStorage.setItem('authToken', authToken);
+      addLog('API configuration saved to localStorage', 'success');
+    } catch (err) {
+      addLog('Error saving API configuration to localStorage', 'error');
+    }
+
+  }, [addLog, baseUrl, apiEndpoint, authToken]);
 
   const isExcelDate = (value) => {
     return typeof value === 'number' && value > 1 && value < 2958466;

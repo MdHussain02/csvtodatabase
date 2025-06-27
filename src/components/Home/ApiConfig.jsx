@@ -1,7 +1,7 @@
 import React from 'react';
 import { Settings, Save } from 'lucide-react';
 
-const ApiConfig = ({ baseUrl, setBaseUrl, apiEndpoint, setApiEndpoint, authToken, setAuthToken, saveApiConfig }) => {
+const ApiConfig = ({ setBaseUrl, apiEndpoint, setApiEndpoint, setAuthToken, saveApiConfig ,baseUrl , authToken }) => {
   return (
     <div>
       <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center">
