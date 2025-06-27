@@ -1,13 +1,15 @@
-import { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 
 const useCsvApiLogic = () => {
-  const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem('baseUrl') || '');
+  // State variables (localStorage removed for Claude.ai compatibility)
+  const [baseUrl, setBaseUrl] = useState('');
   const [apiEndpoint, setApiEndpoint] = useState('');
-  const [authToken, setAuthToken] = useState(() => localStorage.getItem('authToken') || '');
+  const [authToken, setAuthToken] = useState('');
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState('');
   const [fieldNames, setFieldNames] = useState(['']);
+  const [fieldTypes, setFieldTypes] = useState(['string']); // New state for field types
   const [isLoading, setIsLoading] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [requestMethod, setRequestMethod] = useState('POST');
@@ -19,7 +21,7 @@ const useCsvApiLogic = () => {
   const [totalRows, setTotalRows] = useState(0);
   const [dateFields, setDateFields] = useState([]);
   const [imageFields, setImageFields] = useState([]);
-  const [uploadedImages, setUploadedImages] = useState({});
+  const [uploadedImages, setUploadedImages] = useState({}); // Now stores File objects instead of base64
 
   const addLog = useCallback((message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
@@ -27,10 +29,9 @@ const useCsvApiLogic = () => {
   }, []);
 
   const saveApiConfig = useCallback(() => {
-    localStorage.setItem('baseUrl', baseUrl);
-    localStorage.setItem('authToken', authToken);
-    addLog('API configuration saved to local storage', 'success');
-  }, [baseUrl, authToken, addLog]);
+    // Simulate saving (localStorage not available in Claude.ai)
+    addLog('API configuration saved (in-memory)', 'success');
+  }, [addLog]);
 
   const isExcelDate = (value) => {
     return typeof value === 'number' && value > 1 && value < 2958466;
@@ -62,17 +63,37 @@ const useCsvApiLogic = () => {
     return value;
   };
 
+  // Convert value based on specified type
+  const convertValueByType = (value, type) => {
+    if (value === null || value === undefined || value === '') return value;
+    
+    switch (type) {
+      case 'number':
+        const num = Number(value);
+        return isNaN(num) ? value : num;
+      case 'boolean':
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'string') {
+          const lowerValue = value.toLowerCase().trim();
+          if (lowerValue === 'true' || lowerValue === '1' || lowerValue === 'yes') return true;
+          if (lowerValue === 'false' || lowerValue === '0' || lowerValue === 'no') return false;
+        }
+        if (typeof value === 'number') return value !== 0;
+        return Boolean(value);
+      case 'string':
+      default:
+        return String(value);
+    }
+  };
+
   const handleImageUpload = (index, file) => {
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setUploadedImages((prev) => ({
-          ...prev,
-          [index]: e.target.result, // Store base64 string
-        }));
-        addLog(`🖼️ Image uploaded for field ${fieldNames[index] || index + 1}: ${file.name}`, 'success');
-      };
-      reader.readAsDataURL(file);
+      // Store the actual File object instead of base64
+      setUploadedImages((prev) => ({
+        ...prev,
+        [index]: file, // Store File object directly
+      }));
+      addLog(`🖼️ Image uploaded for field ${fieldNames[index] || index + 1}: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`, 'success');
     }
   };
 
@@ -100,6 +121,21 @@ const useCsvApiLogic = () => {
         if (jsonData.length > 0) {
           const headers = Object.keys(jsonData[0]);
           setFieldNames(headers);
+          
+          // Auto-detect field types based on sample data
+          const detectedTypes = headers.map((header) => {
+            const sampleValue = jsonData[0][header];
+            if (typeof sampleValue === 'number') return 'number';
+            if (typeof sampleValue === 'boolean') return 'boolean';
+            if (typeof sampleValue === 'string') {
+              const lowerValue = sampleValue.toLowerCase().trim();
+              if (['true', 'false', 'yes', 'no', '1', '0'].includes(lowerValue)) return 'boolean';
+              if (!isNaN(Number(sampleValue))) return 'number';
+            }
+            return 'string';
+          });
+          setFieldTypes(detectedTypes);
+          
           const potentialDateFields = headers.map((header) => {
             const sampleValue = jsonData[0][header];
             const isLikelyDate =
@@ -115,6 +151,12 @@ const useCsvApiLogic = () => {
           if (dateFieldsDetected > 0) {
             addLog(`🗓️ Detected ${dateFieldsDetected} potential date fields`, 'info');
           }
+          
+          // Log auto-detected types
+          const typeDetections = detectedTypes.filter(type => type !== 'string').length;
+          if (typeDetections > 0) {
+            addLog(`🔧 Auto-detected ${typeDetections} non-string field types`, 'info');
+          }
         }
       } catch (err) {
         addLog(`Error reading file: ${err.message}`, 'error');
@@ -127,20 +169,28 @@ const useCsvApiLogic = () => {
     const newFields = [...fieldNames];
     newFields[index] = value;
     setFieldNames(newFields);
-    if (dateFields.length !== newFields.length) {
-      const newDateFields = [...dateFields];
-      const newImageFields = [...imageFields];
-      while (newDateFields.length < newFields.length) {
-        newDateFields.push(false);
-        newImageFields.push(false);
+    
+    // Ensure all arrays have the same length
+    const ensureArrayLength = (arr, defaultValue) => {
+      const newArr = [...arr];
+      while (newArr.length < newFields.length) {
+        newArr.push(defaultValue);
       }
-      if (newDateFields.length > newFields.length) {
-        newDateFields.splice(newFields.length);
-        newImageFields.splice(newFields.length);
+      if (newArr.length > newFields.length) {
+        newArr.splice(newFields.length);
       }
-      setDateFields(newDateFields);
-      setImageFields(newImageFields);
-    }
+      return newArr;
+    };
+    
+    setFieldTypes(ensureArrayLength(fieldTypes, 'string'));
+    setDateFields(ensureArrayLength(dateFields, false));
+    setImageFields(ensureArrayLength(imageFields, false));
+  };
+
+  const handleFieldTypeChange = (index, type) => {
+    const newFieldTypes = [...fieldTypes];
+    newFieldTypes[index] = type;
+    setFieldTypes(newFieldTypes);
   };
 
   const handleDateFieldChange = (index, isDateField) => {
@@ -164,6 +214,7 @@ const useCsvApiLogic = () => {
 
   const addField = () => {
     setFieldNames([...fieldNames, '']);
+    setFieldTypes([...fieldTypes, 'string']);
     setDateFields([...dateFields, false]);
     setImageFields([...imageFields, false]);
   };
@@ -173,12 +224,19 @@ const useCsvApiLogic = () => {
       const newFields = [...fieldNames];
       newFields.splice(index, 1);
       setFieldNames(newFields);
+      
+      const newFieldTypes = [...fieldTypes];
+      newFieldTypes.splice(index, 1);
+      setFieldTypes(newFieldTypes);
+      
       const newDateFields = [...dateFields];
       newDateFields.splice(index, 1);
       setDateFields(newDateFields);
+      
       const newImageFields = [...imageFields];
       newImageFields.splice(index, 1);
       setImageFields(newImageFields);
+      
       setUploadedImages((prev) => {
         const newImages = { ...prev };
         delete newImages[index];
@@ -238,15 +296,10 @@ const useCsvApiLogic = () => {
     setStatus('🔄 Processing...');
     setLogs([]);
     const cleanedFieldNames = fieldNames.map((f) => f.trim()).filter(Boolean);
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${authToken}`,
-    };
-    customHeaders.forEach(({ key, value }) => {
-      if (key.trim() && value.trim()) {
-        headers[key.trim()] = value.trim();
-      }
-    });
+    
+    // Check if we have any image fields
+    const hasImageFields = imageFields.some(Boolean);
+
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
@@ -258,34 +311,91 @@ const useCsvApiLogic = () => {
         let successCount = 0;
         let failCount = 0;
         const failedRows = [];
+
         for (let i = 0; i < jsonData.length; i += batchSize) {
           const batch = jsonData.slice(i, i + batchSize);
           for (const [rowIndex, row] of batch.entries()) {
             const actualRowIndex = i + rowIndex + 1;
             try {
-              const payload = {};
-              cleanedFieldNames.forEach((field, fieldIndex) => {
-                let value = row[field] !== undefined ? row[field] : '';
-                if (dateFields[fieldIndex] && value) {
-                  const originalValue = value;
-                  value = convertToISO(value, field);
-                  if (originalValue !== value && successCount === 0) {
-                    addLog(`🗓️ Converting ${field}: ${originalValue} → ${value}`, 'info');
-                  }
+              let requestBody;
+              let headers = {
+                Authorization: `Bearer ${authToken}`,
+              };
+
+              // Add custom headers
+              customHeaders.forEach(({ key, value }) => {
+                if (key.trim() && value.trim()) {
+                  headers[key.trim()] = value.trim();
                 }
-                if (imageFields[fieldIndex]) {
-                  value = uploadedImages[fieldIndex] || '';
-                  if (successCount === 0) {
-                    addLog(`🖼️ Using uploaded image for ${field}`, 'info');
-                  }
-                }
-                payload[field] = value;
               });
+
+              if (hasImageFields) {
+                // Use FormData when images are present
+                const formData = new FormData();
+                
+                cleanedFieldNames.forEach((field, fieldIndex) => {
+                  let value = row[field] !== undefined ? row[field] : '';
+                  
+                  if (dateFields[fieldIndex] && value) {
+                    const originalValue = value;
+                    value = convertToISO(value, field);
+                    if (originalValue !== value && successCount === 0) {
+                      addLog(`🗓️ Converting ${field}: ${originalValue} → ${value}`, 'info');
+                    }
+                  }
+                  
+                  if (imageFields[fieldIndex]) {
+                    const imageFile = uploadedImages[fieldIndex];
+                    if (imageFile) {
+                      // Append the actual file to FormData
+                      formData.append(field, imageFile, imageFile.name);
+                      if (successCount === 0) {
+                        addLog(`🖼️ Adding image file for ${field}: ${imageFile.name}`, 'info');
+                      }
+                    }
+                  } else {
+                    // Convert value by type and append to FormData
+                    const convertedValue = convertValueByType(value, fieldTypes[fieldIndex] || 'string');
+                    formData.append(field, convertedValue);
+                    if (successCount === 0 && convertedValue !== value) {
+                      addLog(`🔧 Converting ${field} to ${fieldTypes[fieldIndex]}: ${value} → ${convertedValue}`, 'info');
+                    }
+                  }
+                });
+                
+                requestBody = formData;
+                // Don't set Content-Type header for FormData - browser will set it with boundary
+              } else {
+                // Use JSON when no images
+                headers['Content-Type'] = 'application/json';
+                const payload = {};
+                cleanedFieldNames.forEach((field, fieldIndex) => {
+                  let value = row[field] !== undefined ? row[field] : '';
+                  if (dateFields[fieldIndex] && value) {
+                    const originalValue = value;
+                    value = convertToISO(value, field);
+                    if (originalValue !== value && successCount === 0) {
+                      addLog(`🗓️ Converting ${field}: ${originalValue} → ${value}`, 'info');
+                    }
+                  }
+                  
+                  // Convert value by type
+                  const convertedValue = convertValueByType(value, fieldTypes[fieldIndex] || 'string');
+                  payload[field] = convertedValue;
+                  
+                  if (successCount === 0 && convertedValue !== value) {
+                    addLog(`🔧 Converting ${field} to ${fieldTypes[fieldIndex]}: ${value} → ${convertedValue}`, 'info');
+                  }
+                });
+                requestBody = JSON.stringify(payload);
+              }
+
               const response = await fetch(`${baseUrl}${apiEndpoint}`, {
                 method: requestMethod,
                 headers,
-                body: JSON.stringify(payload),
+                body: requestBody,
               });
+
               if (response.ok) {
                 successCount++;
                 if (successCount % 10 === 0) {
@@ -346,6 +456,8 @@ const useCsvApiLogic = () => {
     setStatus,
     fieldNames,
     setFieldNames,
+    fieldTypes,
+    setFieldTypes,
     isLoading,
     setIsLoading,
     showAdvanced,
@@ -371,6 +483,7 @@ const useCsvApiLogic = () => {
     parseCSVAndSubmit,
     handleFileChange,
     handleFieldChange,
+    handleFieldTypeChange,
     addField,
     removeField,
     handleCustomHeaderChange,

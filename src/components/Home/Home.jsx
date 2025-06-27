@@ -56,6 +56,8 @@ const Home = () => {
     handleImageFieldChange,
     handleImageUpload,
     saveApiConfig,
+    fieldTypes,
+    handleFieldTypeChange,
   } = useCsvApiLogic();
 
   return (
@@ -92,6 +94,7 @@ const Home = () => {
             />
             <FieldMapping
               fieldNames={fieldNames}
+              fieldTypes={fieldTypes}
               dateFields={dateFields}
               imageFields={imageFields}
               handleFieldChange={handleFieldChange}
@@ -100,6 +103,7 @@ const Home = () => {
               handleImageUpload={handleImageUpload}
               addField={addField}
               removeField={removeField}
+              handleFieldTypeChange={handleFieldTypeChange}
             />
             <AdvancedSettings
               showAdvanced={showAdvanced}
